@@ -204,7 +204,9 @@ class TargetStatusGetter(object):
             self.status = status
             self.cv.notify()
         while self.running:
-            # Poor man's long-polling.
+            # Poor man's long-polling. Poll slowly, but speed up around track
+            # changes, to catch changes with less delay. Hopefully goes away
+            # when we change out the backend...
             with self.cv:
                 if not self.status.playing:
                     log().debug("Target not playing.")
@@ -265,6 +267,7 @@ class Follow(object):
         self.thread = None
 
     def is_synced(self):
+        """Decide if we should catch up to the target."""
         if bool(self.target_status) != bool(self.local_status):
             return False
         if not self.local_status:
@@ -285,10 +288,16 @@ class Follow(object):
             return False
         if not self.local_status.playing:
             return True
+
         if self.target_status.track_uri != self.local_status.track_uri:
+            # We have a next-track for the target, and we just switched tracks
+            # (probably automatically went to the next track). It's okay to
+            # switch tracks.
             if self.local_status.pos < 0.1:
                 log().debug("We just switched tracks, catching up.")
                 return False
+            # If we're just finishing up a track, let it finish, before
+            # switching to the target's next track.
             delta = (
                 self.local_status.track_length - self.local_status.pos +
                 self.target_status.pos)
@@ -296,6 +305,7 @@ class Follow(object):
             if delta > self.WINDOW:
                 return False
         else:
+            # Seek to the right position if we're too far off.
             delta = self.target_status.pos - self.local_status.pos
             log().debug("Delta = %.3f", delta)
             if abs(delta) > self.WINDOW:
@@ -336,6 +346,9 @@ class Follow(object):
                 return False
         target_pos = self.target_status.pos
         # Smoother transitions.
+        # TODO: Web Helper connections seem to always take several seconds, we
+        # often have to seek after a track change. Maybe subtract some time
+        # here.
         if target_pos < self.WINDOW:
             target_pos = 0
         target_uri = "%s#%d:%.3f" % (
@@ -391,6 +404,9 @@ class Follow(object):
                             self.target_status = target_getter.status
 
                         if self.maybe_sync():
+                            # If we made any status changes, any old long-polls
+                            # might return outdated data. Ignore them and start
+                            # new polls.
                             log().debug("Changed local status, resetting getter.")
                             local_getter.stop()
                             local_getter = None

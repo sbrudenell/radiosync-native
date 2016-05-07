@@ -7,6 +7,8 @@ import urllib2
 import urlparse
 
 
+# Adapted from https://github.com/cgbystrom/spotify-local-http-api
+
 class SpotifyRemote(object):
 
     SCHEME = "https"
@@ -95,13 +97,28 @@ class SpotifyRemote(object):
 
     def remote_status_shortlong(self, returnon=None, returnafter=None,
                                 **qdict):
+        """Yields two status results: immediate and long-poll.
+
+        If we long-poll Spotify, react to events, the long-poll again, we will
+        miss any status changes that happened after the last long-poll returns
+        and before the next one begins.
+
+        This starts a long-poll, then does a short poll and yields the result,
+        then yields the result of the long poll. Hopefully this captures any
+        status updates as quickly as possible.
+
+        The start of the period covered by a long-poll is not well defined, so
+        this may miss some updates.
+        """
         long_qdict = self.status_qdict(
             returnon=returnon, returnafter=returnafter, **qdict)
         long_qstr = self.qstr(**long_qdict)
+        # TODO: If returnafter is short enough (2s) the second status will be
+        # earlier than the first. Some part of the request takes a long time
+        # (SSL negotiation?).
         conn = httplib.HTTPSConnection(self.host, self.port)
         conn.request(
             "GET", "/remote/status.json?%s" % long_qstr, headers=self.headers)
-        # Wait for socket writable?
         yield self.remote_status(**qdict)
         yield json.loads(conn.getresponse().read())
 
